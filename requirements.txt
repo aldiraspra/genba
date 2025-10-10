@@ -1,0 +1,8 @@
+streamlit
+streamlit-chat
+pandas
+duckdb
+google-generativeai
+langgraph
+python-dotenv
+openpyxl
