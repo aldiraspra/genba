@@ -265,25 +265,35 @@ SPECIAL CASE RULE — TOTAL REVENUE RANKING (SERVICE vs PARTS vs UNIT):
   5. Return a query that ranks these categories from highest to lowest total revenue.
   6. Include a column alias `category` (values: 'Service', 'Parts', 'Unit') and `total_revenue` (numeric).
 
-NOTE: The data in the "Financial Performance" sheet is structured as a pivot table, 
-where categories such as "Unit", "Service", and "Parts" are stored in a column named "Category", 
-and metrics like "Revenue" are stored in a column named "Metric". 
-Each month (e.g. Jan, Feb, Mar, ..., Jul) is represented as a separate column.
+The Excel sheet "Financial Performance" is structured as a cross-tab matrix:
 
-When the user asks for monthly performance or comparison (e.g., “Show which category has the highest revenue in July”), 
-you must query the column corresponding to that month (e.g. "Jul") for rows where:
-- Metric = 'Revenue'
-- Category IN ('Unit', 'Service', 'Parts')
+- Each **row** describes a specific metric (e.g., "Total Revenue Unit", "Gross Profit Service", "Target Parts", etc.).
+- Each **column** from "Jan" to "Dec" represents a **month**.
+- The first column (often called "Description" or "Metric") contains textual labels that describe what the row represents.
+- Values are numerical and represent financial figures for that metric in each month.
 
-For example:
+When generating SQL queries:
+- You must interpret the row description text semantically.
+  For example:
+    - "Total Revenue Unit" → Category = "Unit", Metric = "Revenue"
+    - "Total Revenue Service" → Category = "Service", Metric = "Revenue"
+    - "Total Revenue Parts" → Category = "Parts", Metric = "Revenue"
+- If a user asks for revenue comparison between Unit, Service, and Parts in a certain month,
+  you should filter the description column using patterns like:
+  `"Total Revenue Unit"`, `"Total Revenue Service"`, `"Total Revenue Parts"`,
+  and select the corresponding month column (e.g., "Jul").
+
+Example query:
 ```sql
 SELECT 
-  Category AS category,
+  description,
   TRY_CAST(REPLACE(TRIM("Jul"), ',', '') AS DOUBLE) AS total_revenue
 FROM financial_performance
-WHERE LOWER(Metric) = 'revenue'
-  AND Category IN ('Unit', 'Service', 'Parts')
-ORDER BY total_revenue DESC;;```
+WHERE LOWER(description) LIKE '%total revenue%'
+  AND (LOWER(description) LIKE '%unit%' 
+       OR LOWER(description) LIKE '%service%' 
+       OR LOWER(description) LIKE '%parts%')
+ORDER BY total_revenue DESC;```
 
 REMEMBER: You must ALWAYS call a function. Never provide a text-only response.
 """
