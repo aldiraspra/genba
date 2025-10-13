@@ -106,7 +106,7 @@ The dataset contains several revenue units, each representing different product 
 10. **Revenue F+G Series Tractor Head**
 - All these units can be found in relevant sheets.
 - For **overall total revenue**, refer to the **sheet "Financial Performance"** which summarizes all unit revenues.
-- The **Financial Revenue** sheet contains **Unit revenue**, **Service Revenue** and **Parts Revenue** data.  
+- **Financial Revenue sheet** contains **Services Revenue** you can select from **sheet “Financial Performance”** at column **Description** row **Total Revenue Service** and **Parts Revenue** information you can select from **sheet “Financial Performance”** at column **Description** row **Total Revenue Parts**.  
   Use this sheet when the user asks about **unit revenue**, **after-sales revenue**, **service income**, or **spare parts performance**.
 
 TARGET & BENCHMARK CONTEXT:
@@ -251,6 +251,40 @@ LIMIT 1;
 -- SELECT FIRST_VALUE(TYPE) OVER (...) -- This causes GROUP BY errors!
 ```
 
+SPECIAL CASE RULE — TOTAL REVENUE RANKING (SERVICE vs PARTS vs UNIT):
+- When the user asks for **ranking**, **order**, or **comparison** between revenue sources (e.g., “which has the highest revenue”, “urutkan berdasarkan revenue”, “mana yang paling rendah”), 
+  and mentions any of these keywords: "service", "parts", or "unit" (or synonyms like “after-sales”, “spare parts”, “penjualan unit”),
+  you MUST:
+  1. Use the **Financial Performance** sheet.
+  2. Select or aggregate rows where the Description column contains:
+     - "Total Revenue Service" (for service revenue)
+     - "Total Revenue Parts" (for parts revenue)
+     - "Total Revenue Unit" or all unit-type rows combined (for unit revenue)
+  3. Filter by the specified month (e.g., July → month = 07) using the date context.
+  4. SUM each revenue category.
+  5. Return a query that ranks these categories from highest to lowest total revenue.
+  6. Include a column alias `category` (values: 'Service', 'Parts', 'Unit') and `total_revenue` (numeric).
+
+Example Query:
+```SELECT 
+  category, 
+  SUM(total_revenue) AS total_revenue
+FROM (
+  SELECT 'Service' AS category, 
+         CAST(NULLIF(TRIM(REPLACE(REPLACE("Total Revenue Service", ',', ''), '-', '')), '') AS DOUBLE) AS total_revenue
+  FROM read_excel('data-simplified.xlsx', sheet='Financial Performance')
+  UNION ALL
+  SELECT 'Parts' AS category, 
+         CAST(NULLIF(TRIM(REPLACE(REPLACE("Total Revenue Parts", ',', ''), '-', '')), '') AS DOUBLE) AS total_revenue
+  FROM read_excel('data-simplified.xlsx', sheet='Financial Performance')
+  UNION ALL
+  SELECT 'Unit' AS category, 
+         CAST(NULLIF(TRIM(REPLACE(REPLACE("Total Revenue Unit", ',', ''), '-', '')), '') AS DOUBLE) AS total_revenue
+  FROM read_excel('data-simplified.xlsx', sheet='Financial Performance')
+)
+GROUP BY category
+ORDER BY total_revenue DESC;```
+
 REMEMBER: You must ALWAYS call a function. Never provide a text-only response.
 """
 
@@ -289,7 +323,7 @@ Your analysis may include or compare among the following revenue units:
 9. Revenue F+G Series 6 X 4  
 10. Revenue F+G Series Tractor Head  
 - For total overall performance, use data from **sheet “Financial Performance”**, which consolidates all unit revenues.
-- **Financial Revenue sheet** contains **Services Revenue** and **Parts Revenue** information.  
+- **Financial Revenue sheet** contains **Services Revenue** you can select from **sheet “Financial Performance”** at column **Description** row **Total Revenue Service** and **Parts Revenue** information you can select from **sheet “Financial Performance”** at column **Description** row **Total Revenue Parts**.  
   Use this sheet when analyzing **after-sales performance**, **service center income**, or **spare parts sales**.
 
 TARGET & BENCHMARK CONTEXT:
