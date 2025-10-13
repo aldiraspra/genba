@@ -162,6 +162,34 @@ Multi-Sheet Analysis Rules:
    - Use NULLIF for safe division operations
    - Cast data types appropriately
    - Include validation counts in complex queries
+   - **CRITICAL: Revenue Categories in financial_performance sheet**:
+     - When user asks for "unit revenue" or "vehicle revenue", include ALL vehicle types, not just examples
+     - Unit/Vehicle revenue rows contain patterns like: "Revenue D-Max", "Revenue mu-X", "Revenue Traga", etc.
+     - Use pattern matching: `WHERE Description LIKE 'Revenue %'` to capture ALL unit revenues
+     - **WRONG**: `WHERE Description IN ('Revenue D-Max', 'Revenue mu-X', 'Revenue Traga')` ❌ Only gets 3 units
+     - **CORRECT**: `WHERE Description LIKE 'Revenue %'` ✅ Gets ALL unit revenues
+     - **IMPORTANT: Total Revenue Summary Rows** in financial_performance sheet:
+       - "Total Revenue Unit" = Total revenue from all vehicle/unit sales
+       - "Total Revenue Service" = Total revenue from services (NOTE: has trailing space in data!)
+       - "Total Revenue Part" = Total revenue from parts/spare parts (NOTE: has trailing space in data!)
+       - **CRITICAL**: Some Description values have trailing spaces! Always use TRIM() or LIKE patterns
+       - **IMPORTANT**: When using TRIM(Description), compare against values WITHOUT trailing spaces!
+         - ✅ CORRECT: `WHERE TRIM(Description) IN ('Total Revenue Unit', 'Total Revenue Service', 'Total Revenue Part')`
+         - ❌ WRONG: `WHERE TRIM(Description) IN ('Total Revenue Unit', 'Total Revenue Service ', 'Total Revenue Part ')` - Has spaces in comparison!
+       - Alternative: Use LIKE pattern: `WHERE Description LIKE 'Total Revenue%'`
+       - **DO NOT** query service_performance or part_performance for "Total Revenue" - they don't have it!
+       - ALL total revenue data is consolidated in the financial_performance sheet
+   
+   - **CRITICAL: TARGET DATA STRUCTURE**:
+     - **UNIT TARGETS**: Available in `eus_plan_bulanan` sheet
+       - Target units: `WHERE "Unnamed: 2" = 'Unit'` (monthly columns: Jan, Feb, Mar, etc.)
+       - Target revenue: `WHERE "Unnamed: 2" = 'IDR Mio'` (revenue targets in millions)
+       - Monthly targets available for each vehicle type (D-Max, mu-X, Traga, N-Series, etc.)
+     - **SERVICE TARGETS**: NOT AVAILABLE in any sheet
+       - When user asks for service targets, inform them that service targets are not tracked in the data
+     - **PART TARGETS**: NOT AVAILABLE in any sheet
+       - When user asks for part targets, inform them that part targets are not tracked in the data
+     - **IMPORTANT**: Only Unit/Vehicle revenue has targets. Service and Part revenue do NOT have targets in the data.
 
 4. DuckDB SQL Rules:
    - **CRITICAL**: Column names with spaces or special characters MUST be enclosed in double quotes (e.g., `"Actual DO"`).
@@ -182,14 +210,30 @@ Multi-Sheet Analysis Rules:
      - Only use final COALESCE('0') for individual row calculations, NOT for aggregation columns
    - **Text to Number Conversion FOR AGGREGATIONS (SUM, AVG)**:
      `SUM(CAST(NULLIF(TRIM(REPLACE(REPLACE("Column Name", ',', ''), '-', '')), '') AS DOUBLE))`
-     Step by step: 1) Remove commas, 2) Replace dash with empty string, 3) TRIM whitespace, 4) NULLIF empty string to NULL (SUM ignores NULL), 5) CAST to DOUBLE
+     Step by step: 
+     1) REPLACE("Column Name", ',', '') → Remove commas (3 args!)
+     2) REPLACE(result, '-', '') → Remove dashes (3 args!)
+     3) TRIM(result) → Remove whitespace
+     4) NULLIF(result, '') → Convert empty to NULL (SUM ignores NULL)
+     5) CAST to DOUBLE
+     **CRITICAL**: Each REPLACE must have exactly 3 arguments!
    - **Text to Number Conversion FOR INDIVIDUAL VALUES (in WHERE, calculations)**:
      `CAST(COALESCE(NULLIF(TRIM(REPLACE(REPLACE(COALESCE("Column Name", '0'), ',', ''), '-', '0')), ''), '0') AS DOUBLE)`
+     Same rules apply: Every REPLACE needs 3 arguments!
    - **CRITICAL: REPLACE function syntax**: REPLACE(string, from_string, to_string) - ALWAYS provide ALL 3 arguments!
-     - Correct: `REPLACE(column, ',', '')` - removes commas
-     - Correct: `REPLACE(column, '-', '')` - removes dash (for SUM - let NULLIF handle empty)
-     - Correct: `REPLACE(column, '-', '0')` - replaces dash with zero (for individual calculations)
-     - WRONG: `REPLACE(column, ',')` - missing third argument!
+     - ✅ Correct: `REPLACE(column, ',', '')` - removes commas (3 arguments)
+     - ✅ Correct: `REPLACE(column, '-', '')` - removes dash (3 arguments)
+     - ✅ Correct: `REPLACE(column, '-', '0')` - replaces dash with zero (3 arguments)
+     - ❌ WRONG: `REPLACE(column, ',')` - missing third argument! This will cause "No function matches" error!
+     - ❌ WRONG: `REPLACE(column, '-')` - missing third argument! This will cause "No function matches" error!
+     - **ALWAYS count your arguments**: REPLACE needs exactly 3 parameters separated by commas
+   - **CRITICAL: Nested Function Parentheses** - Pay careful attention to closing parentheses placement!
+     - **CORRECT nesting**: `TRIM(REPLACE(REPLACE(column, ',', ''), '-', ''))` 
+       → Inner REPLACE: `REPLACE(column, ',', '')` removes commas
+       → Outer REPLACE: `REPLACE(result_from_inner, '-', '')` removes dashes  
+       → TRIM wraps the entire double-REPLACE result
+     - **WRONG nesting**: `TRIM(REPLACE(REPLACE(column, ',', '')), '-', '')` ← Parenthesis in wrong place!
+       → This breaks the TRIM function call
    - **NEVER use regexp_replace with '[^0-9.-]' pattern** as it fails on dash characters. Use REPLACE and TRIM functions instead.
    - **Alternative for clean data**: `CAST(TRIM(REPLACE(REPLACE(COALESCE("Column", '0'), ',', ''), '-', '0')) AS DOUBLE)` but still use TRIM to handle whitespace.
 
@@ -203,6 +247,8 @@ Example Query with Proper NULL Handling for Aggregations:
 ```sql
 -- Question: "What's the total SPK and DO conversion for July?"
 -- CORRECT: Use NULLIF to ignore NULL/empty values in SUM
+-- CRITICAL: Pay attention to parentheses nesting!
+-- CRITICAL: Each REPLACE must have exactly 3 arguments!
 SELECT 
   SUM(CAST(NULLIF(TRIM(REPLACE(REPLACE("Kuantitas SPK", ',', ''), '-', '')), '') AS DOUBLE)) as total_spk,
   SUM(CAST(NULLIF(TRIM(REPLACE(REPLACE("Kuantitas DO", ',', ''), '-', '')), '') AS DOUBLE)) as total_do,
@@ -211,8 +257,101 @@ SELECT
 FROM spk_do
 WHERE STRFTIME(TRY_CAST(STRPTIME("Tanggal Input", '%m/%d/%y') AS DATE), '%Y-%m') = '2025-07';
 
+-- Breaking down REPLACE usage:
+-- REPLACE("Kuantitas SPK", ',', '')  ✅ 3 arguments: column, find ',', replace with ''
+-- REPLACE(result, '-', '')           ✅ 3 arguments: result from above, find '-', replace with ''
+
+-- COMMON MISTAKES:
+-- ❌ REPLACE("Kuantitas SPK", ',')     WRONG - only 2 arguments! Missing the replacement string!
+-- ❌ REPLACE("Kuantitas SPK", '-')     WRONG - only 2 arguments! Missing the replacement string!
+-- The error message will be: "No function matches the given name and argument types 'replace(VARCHAR, STRING_LITERAL)'"
+
+-- WRONG PARENTHESES: Don't put closing ) after inner REPLACE!
+-- TRIM(REPLACE(REPLACE(col, ',', '')), '-', '')  ❌ WRONG - breaks TRIM!
+-- CORRECT: TRIM(REPLACE(REPLACE(col, ',', ''), '-', ''))  ✓ All nested properly
+
 -- WRONG: Don't use COALESCE('0') before SUM - it counts NULLs as zeros!
 -- SUM(CAST(COALESCE("Kuantitas SPK", '0') AS DOUBLE)) -- This is WRONG!
+```
+
+Example Query for Total Revenue from Multiple Categories:
+```sql
+-- Question: "What's the total revenue from units, services, and parts in July 2025?"
+-- CRITICAL: ALL revenue totals are in financial_performance sheet!
+-- CRITICAL: Some Description values have trailing spaces - use TRIM()!
+-- CRITICAL: When using TRIM(), compare against values WITHOUT spaces!
+
+-- ✅ CORRECT APPROACH 1: Use TRIM() to handle trailing spaces
+SELECT 
+  SUM(CAST(NULLIF(TRIM(REPLACE(REPLACE(Jul, ',', ''), '-', '')), '') AS DOUBLE)) AS grand_total_revenue
+FROM financial_performance
+WHERE TRIM(Description) IN ('Total Revenue Unit', 'Total Revenue Service', 'Total Revenue Part');
+-- NOTE: No trailing spaces in the IN clause values! TRIM removes them from data.
+
+-- ✅ CORRECT APPROACH 2: Get breakdown by category with TRIM()
+SELECT 
+  TRIM(Description) AS category,
+  CAST(NULLIF(TRIM(REPLACE(REPLACE(Jul, ',', ''), '-', '')), '') AS DOUBLE) AS revenue
+FROM financial_performance
+WHERE TRIM(Description) IN ('Total Revenue Unit', 'Total Revenue Service', 'Total Revenue Part')
+ORDER BY revenue DESC;
+-- This will return ALL three rows with proper ordering
+
+-- ✅ CORRECT APPROACH 3: Use LIKE pattern (handles trailing spaces automatically)
+SELECT 
+  TRIM(Description) AS category,
+  CAST(NULLIF(TRIM(REPLACE(REPLACE(Jul, ',', ''), '-', '')), '') AS DOUBLE) AS revenue
+FROM financial_performance
+WHERE Description LIKE 'Total Revenue%'
+ORDER BY revenue DESC;
+
+-- ❌ WRONG: Including trailing spaces in the IN clause!
+-- WHERE TRIM(Description) IN ('Total Revenue Unit', 'Total Revenue Service ', 'Total Revenue Part ')
+-- This defeats the purpose of using TRIM()!
+
+-- ❌ WRONG: Without TRIM() - will miss rows with trailing spaces!
+-- WHERE Description IN ('Total Revenue Unit', 'Total Revenue Service', 'Total Revenue Part')
+
+-- ❌ WRONG APPROACH: Querying service_performance and part_performance for "Total Revenue"
+-- These sheets don't have "Total Revenue" rows - all totals are in financial_performance!
+```
+
+Example Query for Revenue vs Target Comparison:
+```sql
+-- Question: "What's total revenue from unit, service, and parts in July? Did they meet targets?"
+-- CRITICAL: Only UNIT revenue has targets! Service and Part do NOT have targets.
+
+-- ✅ CORRECT APPROACH: Get all revenues, but only compare Unit revenue to target
+WITH all_revenues AS (
+  SELECT 
+    TRIM(Description) AS category,
+    CAST(NULLIF(TRIM(REPLACE(REPLACE(Jul, ',', ''), '-', '')), '') AS DOUBLE) AS actual_revenue
+  FROM financial_performance
+  WHERE TRIM(Description) IN ('Total Revenue Unit', 'Total Revenue Service', 'Total Revenue Part')
+),
+unit_target AS (
+  SELECT 
+    SUM(CAST(NULLIF(TRIM(REPLACE(REPLACE(Jul, ',', ''), '-', '')), '') AS DOUBLE)) AS target_revenue
+  FROM eus_plan_bulanan
+  WHERE TRIM("Unnamed: 2") = 'IDR Mio'
+)
+SELECT 
+  ar.category,
+  ar.actual_revenue,
+  CASE 
+    WHEN ar.category = 'Total Revenue Unit' THEN ut.target_revenue
+    ELSE NULL  -- Service and Part don't have targets
+  END AS target_revenue,
+  CASE 
+    WHEN ar.category = 'Total Revenue Unit' THEN 
+      (ar.actual_revenue * 100.0 / NULLIF(ut.target_revenue, 0))
+    ELSE NULL  -- No target, so no achievement %
+  END AS achievement_percentage
+FROM all_revenues ar
+LEFT JOIN unit_target ut ON ar.category = 'Total Revenue Unit';
+
+-- ❌ WRONG: Looking for 'Target Revenue Service' or 'Target Revenue Part' in financial_performance
+-- These rows don't exist! Only Unit has targets in eus_plan_bulanan.
 ```
 
 Example Multi-Sheet Query with Robust Cleaning and Proper GROUP BY:
