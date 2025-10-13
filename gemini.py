@@ -265,25 +265,25 @@ SPECIAL CASE RULE — TOTAL REVENUE RANKING (SERVICE vs PARTS vs UNIT):
   5. Return a query that ranks these categories from highest to lowest total revenue.
   6. Include a column alias `category` (values: 'Service', 'Parts', 'Unit') and `total_revenue` (numeric).
 
-Example Query:
-```SELECT 
-  category, 
-  SUM(total_revenue) AS total_revenue
-FROM (
-  SELECT 'Service' AS category, 
-         CAST(NULLIF(TRIM(REPLACE(REPLACE("Total Revenue Service", ',', ''), '-', '')), '') AS DOUBLE) AS total_revenue
-  FROM read_excel('data-simplified.xlsx', sheet='Financial Performance')
-  UNION ALL
-  SELECT 'Parts' AS category, 
-         CAST(NULLIF(TRIM(REPLACE(REPLACE("Total Revenue Parts", ',', ''), '-', '')), '') AS DOUBLE) AS total_revenue
-  FROM read_excel('data-simplified.xlsx', sheet='Financial Performance')
-  UNION ALL
-  SELECT 'Unit' AS category, 
-         CAST(NULLIF(TRIM(REPLACE(REPLACE("Total Revenue Unit", ',', ''), '-', '')), '') AS DOUBLE) AS total_revenue
-  FROM read_excel('data-simplified.xlsx', sheet='Financial Performance')
-)
-GROUP BY category
-ORDER BY total_revenue DESC;```
+NOTE: The data in the "Financial Performance" sheet is structured as a pivot table, 
+where categories such as "Unit", "Service", and "Parts" are stored in a column named "Category", 
+and metrics like "Revenue" are stored in a column named "Metric". 
+Each month (e.g. Jan, Feb, Mar, ..., Jul) is represented as a separate column.
+
+When the user asks for monthly performance or comparison (e.g., “Show which category has the highest revenue in July”), 
+you must query the column corresponding to that month (e.g. "Jul") for rows where:
+- Metric = 'Revenue'
+- Category IN ('Unit', 'Service', 'Parts')
+
+For example:
+```sql
+SELECT 
+  Category AS category,
+  TRY_CAST(REPLACE(TRIM("Jul"), ',', '') AS DOUBLE) AS total_revenue
+FROM financial_performance
+WHERE LOWER(Metric) = 'revenue'
+  AND Category IN ('Unit', 'Service', 'Parts')
+ORDER BY total_revenue DESC;;```
 
 REMEMBER: You must ALWAYS call a function. Never provide a text-only response.
 """
