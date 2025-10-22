@@ -1,7 +1,7 @@
 import streamlit as st
 from streamlit_chat import message
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timedelta
 import uuid
 from gemini import run_excel_analysis
 import logging
@@ -406,32 +406,37 @@ def format_timestamp(iso_timestamp):
     return dt.strftime("%H:%M")
 
 
-def format_session_time(iso_timestamp):
+def format_timestamp(iso_timestamp):
     """Format ISO timestamp for session list"""
     dt = datetime.fromisoformat(iso_timestamp)
     now = datetime.now()
 
     if dt.date() == now.date():
         return dt.strftime("%H:%M")
-    elif dt.date() == (now.date() - pd.Timedelta(days=1)).date():
+    elif dt.date() == (now - timedelta(days=1)).date():
         return "Yesterday"
     else:
         return dt.strftime("%b %d")
 
 
-# Initialize database
+# Initialize database (with error handling)
 init_db()
 
-# Initialize session state
-if "current_session_id" not in st.session_state:
-    # Don't create session yet - wait for first message
-    st.session_state.current_session_id = None
-    st.session_state.messages = []
-    st.session_state.first_message = True
+# Function to initialize session state
+def init_session_state():
+    """Initialize session state variables"""
+    if "current_session_id" not in st.session_state:
+        # Don't create session yet - wait for first message
+        st.session_state.current_session_id = None
+        st.session_state.messages = []
+        st.session_state.first_message = True
 
-# Initialize pagination state
-if "session_page" not in st.session_state:
-    st.session_state.session_page = 0
+    # Initialize pagination state
+    if "session_page" not in st.session_state:
+        st.session_state.session_page = 0
+
+# Call initialization when app runs
+init_session_state()
 
 SESSIONS_PER_PAGE = 5  # Number of sessions to show per page
 
