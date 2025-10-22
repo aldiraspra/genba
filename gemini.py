@@ -1,4 +1,5 @@
-from typing import TypedDict, Optional, Dict, List, Union, Any
+from __future__ import annotations
+from typing import TypedDict, Optional, Dict, List, Union, Any, Tuple
 import logging
 import json
 import os
@@ -22,8 +23,23 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Configure Gemini
-genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
+# Configure Gemini - handle both .env and Streamlit secrets
+def get_api_key():
+    """Get API key from environment or Streamlit secrets"""
+    api_key = os.getenv("GOOGLE_API_KEY")
+    if not api_key:
+        try:
+            import streamlit as st
+            api_key = st.secrets.get("GOOGLE_API_KEY")
+        except:
+            pass
+    return api_key
+
+api_key = get_api_key()
+if api_key:
+    genai.configure(api_key=api_key)
+else:
+    logger.warning("GOOGLE_API_KEY not found. Please set it in .env or Streamlit secrets.")
 
 # Global cache for DuckDB connections (keyed by file_name)
 _DUCKDB_CONNECTION_CACHE = {}
@@ -472,7 +488,6 @@ def get_excel_sheets(file_path: str) -> List[str]:
     except Exception as e:
         logger.error(f"Error reading Excel sheets: {str(e)}")
         return []
-
 
 def safe_json_convert(obj):
     """Convert pandas/numpy objects to JSON-serializable format"""

@@ -257,37 +257,52 @@ st.markdown(
 # Database setup
 def init_db():
     """Initialize SQLite database for session management"""
-    conn = sqlite3.connect("chat_sessions.db")
-    c = conn.cursor()
+    try:
+        conn = sqlite3.connect("chat_sessions.db")
+        c = conn.cursor()
 
-    # Create sessions table
-    c.execute(
+        # Create sessions table
+        c.execute(
+            """
+            CREATE TABLE IF NOT EXISTS sessions (
+                id TEXT PRIMARY KEY,
+                title TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
         """
-        CREATE TABLE IF NOT EXISTS sessions (
-            id TEXT PRIMARY KEY,
-            title TEXT NOT NULL,
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL
         )
-    """
-    )
 
-    # Create messages table
-    c.execute(
+        # Create messages table
+        c.execute(
+            """
+            CREATE TABLE IF NOT EXISTS messages (
+                id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                role TEXT NOT NULL,
+                content TEXT NOT NULL,
+                timestamp TEXT NOT NULL,
+                FOREIGN KEY (session_id) REFERENCES sessions (id)
+            )
         """
-        CREATE TABLE IF NOT EXISTS messages (
-            id TEXT PRIMARY KEY,
-            session_id TEXT NOT NULL,
-            role TEXT NOT NULL,
-            content TEXT NOT NULL,
-            timestamp TEXT NOT NULL,
-            FOREIGN KEY (session_id) REFERENCES sessions (id)
         )
-    """
-    )
 
-    conn.commit()
-    conn.close()
+        conn.commit()
+        conn.close()
+        logger.info("✅ Database initialized successfully")
+    except Exception as e:
+        logger.error(f"❌ Database initialization failed: {e}")
+        # Don't crash the app - session history won't work but queries will
+        pass
+
+
+def safe_db_operation(operation_func, *args, **kwargs):
+    """Wrapper for database operations that won't crash the app"""
+    try:
+        return operation_func(*args, **kwargs)
+    except Exception as e:
+        logger.error(f"Database operation failed: {e}")
+        return None
 
 
 def create_session(title="New Analysis"):
