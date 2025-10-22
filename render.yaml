@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: genbafc
+    env: python
+    plan: free
+    autoDeploy: true
+    buildCommand: pip install -r requirements.txt
+    startCommand: streamlit run app.py --server.port=$PORT --server.address=0.0.0.0
+    envVars:
+      - key: GOOGLE_API_KEY
+        sync: false        # set valuenya nanti di dashboard, jangan di-commit
+      - key: PYTHON_VERSION
+        value: 3.12.4
+    disk:
+      name: chat-sessions
+      mountPath: /data
+      sizeGB: 1

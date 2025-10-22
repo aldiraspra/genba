@@ -258,7 +258,7 @@ st.markdown(
 def init_db():
     """Initialize SQLite database for session management"""
     try:
-        conn = sqlite3.connect("chat_sessions.db")
+        conn = sqlite3.connect("data/chat_sessions.db")
         c = conn.cursor()
 
         # Create sessions table
@@ -310,7 +310,7 @@ def create_session(title="New Analysis"):
     session_id = str(uuid.uuid4())
     now = datetime.now().isoformat()
 
-    conn = sqlite3.connect("chat_sessions.db")
+    conn = sqlite3.connect("data/chat_sessions.db")
     c = conn.cursor()
     c.execute(
         "INSERT INTO sessions (id, title, created_at, updated_at) VALUES (?, ?, ?, ?)",
@@ -324,7 +324,7 @@ def create_session(title="New Analysis"):
 
 def update_session_title(session_id, title):
     """Update session title"""
-    conn = sqlite3.connect("chat_sessions.db")
+    conn = sqlite3.connect("data/chat_sessions.db")
     c = conn.cursor()
     c.execute(
         "UPDATE sessions SET title = ?, updated_at = ? WHERE id = ?",
@@ -338,7 +338,7 @@ def get_session_title(session_id):
     """Get the title of a specific session"""
     if not session_id:
         return None
-    conn = sqlite3.connect("chat_sessions.db")
+    conn = sqlite3.connect("data/chat_sessions.db")
     c = conn.cursor()
     c.execute("SELECT title FROM sessions WHERE id = ?", (session_id,))
     result = c.fetchone()
@@ -348,7 +348,7 @@ def get_session_title(session_id):
 
 def get_all_sessions():
     """Get all sessions ordered by updated_at"""
-    conn = sqlite3.connect("chat_sessions.db")
+    conn = sqlite3.connect("data/chat_sessions.db")
     c = conn.cursor()
     c.execute(
         "SELECT id, title, created_at, updated_at FROM sessions ORDER BY updated_at DESC"
@@ -360,7 +360,7 @@ def get_all_sessions():
 
 def get_session_messages(session_id):
     """Get all messages for a session"""
-    conn = sqlite3.connect("chat_sessions.db")
+    conn = sqlite3.connect("data/chat_sessions.db")
     c = conn.cursor()
     c.execute(
         "SELECT id, role, content, timestamp FROM messages WHERE session_id = ? ORDER BY timestamp ASC",
@@ -376,7 +376,7 @@ def add_message(session_id, role, content):
     message_id = str(uuid.uuid4())
     now = datetime.now().isoformat()
 
-    conn = sqlite3.connect("chat_sessions.db")
+    conn = sqlite3.connect("data/chat_sessions.db")
     c = conn.cursor()
     c.execute(
         "INSERT INTO messages (id, session_id, role, content, timestamp) VALUES (?, ?, ?, ?, ?)",
@@ -390,7 +390,7 @@ def add_message(session_id, role, content):
 
 def delete_session(session_id):
     """Delete a session and all its messages"""
-    conn = sqlite3.connect("chat_sessions.db")
+    conn = sqlite3.connect("data/chat_sessions.db")
     c = conn.cursor()
     # Delete messages first
     c.execute("DELETE FROM messages WHERE session_id = ?", (session_id,))
