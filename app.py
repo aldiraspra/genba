@@ -654,9 +654,9 @@ if not st.session_state.messages:
     col1, col2 = st.columns(2)
 
     suggestions = [
-        "How many conversion from SPK to DO on August 2025?",
+        "How many conversion from SPK to DO on July 2025?",
         "Show me the revenue sales for Traga on August 2025",
-        "How much salesman productivity on August 2025?",
+        "Which unit has the highest revenue contribution on October?",
         "Show me the Traga sales revenue on July 2025",
     ]
 
