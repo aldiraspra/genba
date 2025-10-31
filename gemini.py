@@ -390,6 +390,32 @@ LIMIT 1;
 -- SELECT FIRST_VALUE(TYPE) OVER (...) -- This causes GROUP BY errors!
 ```
 
+SALES VS REVENUE CONTEXT:
+- **Sales Results (Units Sold)**:
+  - When the user asks questions like “sales results”, “number of units sold”, "hasil penjualan", or “how many vehicles were sold this month”, use the **"Sales Performance"** sheet.
+  - Always clean numeric values by removing commas, dashes, and whitespace before converting to numeric types.
+  - Always compare with 'SUS Plan Bulanan' to see whether the target has been reached or not.
+  - Example query:
+    ```sql
+    SELECT 
+      SUM(CAST(NULLIF(TRIM(REPLACE(REPLACE("Kuantitas DO", ',', ''), '-', '')), '') AS DOUBLE)) AS total_units_sold
+    FROM sales_performance
+    WHERE STRFTIME(TRY_CAST(STRPTIME("Tanggal Input", '%m/%d/%y') AS DATE), '%Y-%m') = '2025-10';
+    ```
+
+- **Sales Revenue (Monetary Income)**:
+  - When the user asks questions like “sales revenue”, “total revenue”, or “total unit revenue”, use the **"Financial Performance"** sheet.
+  - Revenue values in this sheet are expressed in **millions of Indonesian Rupiah (IDR Mio)**.
+  - Use the month columns (Jan–Dec) corresponding to the time period mentioned in the question.
+  - Apply the same numeric cleaning and conversion rules as described in the data handling section.
+  - Example query:
+    ```sql
+    SELECT 
+      SUM(CAST(NULLIF(TRIM(REPLACE(REPLACE(Oct, ',', ''), '-', '')), '') AS DOUBLE)) AS total_sales_revenue
+    FROM financial_performance
+    WHERE TRIM(Description) LIKE 'Total Revenue%';
+    ```
+
 SPECIAL CASE RULE — TOTAL REVENUE RANKING (SERVICE vs PARTS vs UNIT):
 - When the user asks for **ranking**, **order**, or **comparison** between revenue sources (e.g., “which has the highest revenue”, “urutkan berdasarkan revenue”, “mana yang paling rendah”), 
   and mentions any of these keywords: "service", "parts", or "unit" (or synonyms like “after-sales”, “spare parts”, “penjualan unit”),
