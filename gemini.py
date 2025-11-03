@@ -86,6 +86,10 @@ def clear_duckdb_cache(file_name: str = None):
         _REGISTERED_SHEETS_CACHE.clear()
         logger.info("🗑️ Cleared all DuckDB caches")
 
+def get_user_friendly_error_message() -> str:
+    """Return a user-friendly error message instead of technical details"""
+    return "Maaf, saya mengalami kesulitan memproses pertanyaan Anda. Mohon coba lagi atau formulasikan pertanyaan dengan cara yang berbeda."
+
 # Prompts
 QUERY_GENERATION_PROMPT = """You are an Excel analysis expert that generates SQL or Pandas queries to analyze data from multiple Excel sheets.
 
@@ -107,6 +111,28 @@ IMPORTANT DATA FORMAT:
 - **Revenue values in the data are in IDR (Indonesian Rupiah) in MILLIONS**
 - Example: A value of 450 in the data means IDR 450 Million (IDR 450,000,000)
 - When analyzing revenue, always remember values are already in millions
+
+UNIT REVENUE STRUCTURE:
+The dataset contains several revenue units, each representing different product categories:
+1. **Revenue D-Max**
+2. **Revenue mu-X**
+3. **Revenue Traga**
+4. **Revenue N-Series**
+5. **Revenue N-Series 4ban**
+6. **Revenue N-Series 6ban**
+7. **Revenue F+G Series 4 X 2**
+8. **Revenue F+G Series 6 X 2**
+9. **Revenue F+G Series 6 X 4**
+10. **Revenue F+G Series Tractor Head**
+- All these units can be found in relevant sheets.
+- For **overall total revenue**, refer to the **sheet "Financial Performance"** which summarizes all unit revenues.
+- **Financial Revenue sheet** contains **Services Revenue** you can select from **sheet “Financial Performance”** at column **Description** row **Total Revenue Service** and **Parts Revenue** information you can select from **sheet “Financial Performance”** at column **Description** row **Total Revenue Parts**.  
+  Use this sheet when the user asks about **unit revenue**, **after-sales revenue**, **service income**, or **spare parts performance**.
+
+TARGET & BENCHMARK CONTEXT:
+- The **target (benchmark)** for revenue performance is based on the **SUS Plan (Sales Unit Strategy) monthly plan**.  
+- This **target only applies to Sales/Unit Revenue** (from the Financial Performance sheet).  
+- **Service** and **Spare Parts** revenues **do not have monthly SUS Plan targets**.
 
 CRITICAL: You MUST always call a function. Never respond without calling a function.
 
@@ -384,10 +410,88 @@ LIMIT 1;
 -- SELECT FIRST_VALUE(TYPE) OVER (...) -- This causes GROUP BY errors!
 ```
 
+SALES VS REVENUE CONTEXT:
+- **Sales Results (Units Sold)**:
+  - When the user asks questions like “sales results”, “number of units sold”, "hasil penjualan", or “how many vehicles were sold this month”, use the **"Sales Performance"** sheet.
+  - Always clean numeric values by removing commas, dashes, and whitespace before converting to numeric types.
+  - Always compare with 'SUS Plan Bulanan' to see whether the target has been reached or not.
+  - Example query:
+    ```sql
+    SELECT 
+      SUM(CAST(NULLIF(TRIM(REPLACE(REPLACE("Kuantitas DO", ',', ''), '-', '')), '') AS DOUBLE)) AS total_units_sold
+    FROM sales_performance
+    WHERE STRFTIME(TRY_CAST(STRPTIME("Tanggal Input", '%m/%d/%y') AS DATE), '%Y-%m') = '2025-10';
+    ```
+
+- **Sales Revenue (Monetary Income)**:
+  - When the user asks questions like “sales revenue”, “total revenue”, or “total unit revenue”, use the **"Financial Performance"** sheet.
+  - Revenue values in this sheet are expressed in **millions of Indonesian Rupiah (IDR Mio)**.
+  - Use the month columns (Jan–Dec) corresponding to the time period mentioned in the question.
+  - Apply the same numeric cleaning and conversion rules as described in the data handling section.
+  - Example query:
+    ```sql
+    SELECT 
+      SUM(CAST(NULLIF(TRIM(REPLACE(REPLACE(Oct, ',', ''), '-', '')), '') AS DOUBLE)) AS total_sales_revenue
+    FROM financial_performance
+    WHERE TRIM(Description) LIKE 'Total Revenue%';
+    ```
+
+SPECIAL CASE RULE — TOTAL REVENUE RANKING (SERVICE vs PARTS vs UNIT):
+- When the user asks for **ranking**, **order**, or **comparison** between revenue sources (e.g., “which has the highest revenue”, “urutkan berdasarkan revenue”, “mana yang paling rendah”), 
+  and mentions any of these keywords: "service", "parts", or "unit" (or synonyms like “after-sales”, “spare parts”, “penjualan unit”),
+  you MUST:
+  1. Use the **Financial Performance** sheet.
+  2. Select or aggregate rows where the Description column contains:
+     - "Total Revenue Service" (for service revenue)
+     - "Total Revenue Parts" (for parts revenue)
+     - "Total Revenue Unit" or all unit-type rows combined (for unit revenue)
+  3. Filter by the specified month (e.g., July → month = 07) using the date context.
+  4. SUM each revenue category.
+  5. Return a query that ranks these categories from highest to lowest total revenue.
+  6. Include a column alias `category` (values: 'Service', 'Parts', 'Unit') and `total_revenue` (numeric).
+
+The Excel sheet "Financial Performance" is structured as a cross-tab matrix:
+
+- Each **row** describes a specific metric (e.g., "Total Revenue Unit", "Gross Profit Service", "Target Parts", etc.).
+- Each **column** from "Jan" to "Dec" represents a **month**.
+- The first column (often called "Description" or "Metric") contains textual labels that describe what the row represents.
+- Values are numerical and represent financial figures for that metric in each month.
+
+When generating SQL queries:
+- You must interpret the row description text semantically.
+  For example:
+    - "Total Revenue Unit" → Category = "Unit", Metric = "Revenue"
+    - "Total Revenue Service" → Category = "Service", Metric = "Revenue"
+    - "Total Revenue Parts" → Category = "Parts", Metric = "Revenue"
+- If a user asks for revenue comparison between Unit, Service, and Parts in a certain month,
+  you should filter the description column using patterns like:
+  `"Total Revenue Unit"`, `"Total Revenue Service"`, `"Total Revenue Parts"`,
+  and select the corresponding month column (e.g., "Jul").
+
+Example query:
+```sql
+SELECT 
+  description,
+  TRY_CAST(REPLACE(TRIM("Jul"), ',', '') AS DOUBLE) AS total_revenue
+FROM financial_performance
+WHERE LOWER(description) LIKE '%total revenue%'
+  AND (LOWER(description) LIKE '%unit%' 
+       OR LOWER(description) LIKE '%service%' 
+       OR LOWER(description) LIKE '%parts%')
+ORDER BY total_revenue DESC;```
+
 REMEMBER: You must ALWAYS call a function. Never provide a text-only response.
 """
 
 ANALYSIS_GENERATION_PROMPT = """You are an expert financial analyst and data scientist. Your job is to analyze query results and provide intelligent insights, recommendations, and business intelligence.
+
+CRITICAL LANGUAGE INSTRUCTION:
+- **ALWAYS match the language of the user's question**
+- If the user asks in Bahasa Indonesia, respond in Bahasa Indonesia
+- If the user asks in English, respond in English
+- Detect the language from the user's question and maintain that language throughout your entire response
+- Example: Question "berapa total revenue?" → Answer in Bahasa Indonesia
+- Example: Question "what is the total revenue?" → Answer in English
 
 CURRENT DATE & TIME CONTEXT:
 - Today's Date: {current_date}
@@ -408,6 +512,27 @@ CRITICAL CURRENCY FORMAT:
 - ALWAYS present revenue as "IDR XXX Million" or "Rp XXX Juta" in your analysis
 - Example: "Total revenue: IDR 450 Million" NOT "Total revenue: 450"
 - For large numbers, you can also say "IDR 450 Million (Rp 450,000,000)"
+
+UNIT REVENUE CATEGORIES:
+Your analysis may include or compare among the following revenue units:
+1. Revenue D-Max  
+2. Revenue mu-X  
+3. Revenue Traga  
+4. Revenue N-Series  
+5. Revenue N-Series 4ban  
+6. Revenue N-Series 6ban  
+7. Revenue F+G Series 4 X 2  
+8. Revenue F+G Series 6 X 2  
+9. Revenue F+G Series 6 X 4  
+10. Revenue F+G Series Tractor Head  
+- For total overall performance, use data from **sheet “Financial Performance”**, which consolidates all unit revenues.
+- **Financial Revenue sheet** contains **Services Revenue** you can select from **sheet “Financial Performance”** at column **Description** row **Total Revenue Service** and **Parts Revenue** information you can select from **sheet “Financial Performance”** at column **Description** row **Total Revenue Parts**.  
+  Use this sheet when analyzing **after-sales performance**, **service center income**, or **spare parts sales**.
+
+TARGET & BENCHMARK CONTEXT:
+- The **revenue target (benchmark)** follows the **SUS Plan monthly plan**.  
+- This **target applies only to Sales/Unit Revenue** from the **Financial Performance** sheet.  
+- **Service** and **Parts** revenues **do not have SUS Plan benchmarks**, so their performance should be analyzed based on trend or growth instead of target achievement.
 
 ROLE: Act as a senior business analyst who understands:
 - Financial planning and budgeting
@@ -735,7 +860,7 @@ def complex_duckdb_query(file_name: str, query: str) -> dict:
         except:
             actual_tables = "unable to retrieve"
 
-        # Enhanced error info for debugging
+        # Enhanced error info for debugging (log only, not shown to user)
         debug_info = {
             "query": query,
             "available_sheets": sheet_names if "sheet_names" in locals() else "unknown",
@@ -746,8 +871,10 @@ def complex_duckdb_query(file_name: str, query: str) -> dict:
             ),
             "actual_duckdb_tables": actual_tables,
         }
+        logger.error(f"Debug info: {debug_info}")
 
-        return {"error": error_msg, "debug_info": debug_info}
+        # Return user-friendly error message (technical details only in logs)
+        return {"error": get_user_friendly_error_message(), "debug_info": debug_info}
     # Note: Connection is NOT closed here - it's cached for reuse
     # Use clear_duckdb_cache(file_name) to manually close and clear cache
 
@@ -822,7 +949,8 @@ def simple_dataframe_query(
             }
 
     except Exception as e:
-        return {"error": f"Pandas query error: {str(e)}"}
+        logger.error(f"Pandas query error: {str(e)}")
+        return {"error": get_user_friendly_error_message()}
 
 
 # Tool definitions for Gemini - using dictionary format that Gemini SDK accepts
@@ -904,7 +1032,9 @@ def generate_analysis(user_question: str, query_result: dict, query: str, conver
     try:
         # Format the results for analysis
         if "error" in query_result:
-            return f"Unable to generate analysis due to query error: {query_result['error']}"
+            # Return user-friendly error instead of technical details
+            logger.error(f"Query error in analysis: {query_result['error']}")
+            return get_user_friendly_error_message()
 
         if "result" not in query_result:
             return "Query executed successfully but no data was returned for analysis."
@@ -978,8 +1108,9 @@ def execute_function(name: str, args: dict, state: AgentState) -> dict:
 
     except Exception as e:
         error_msg = f"Function execution error: {str(e)}"
-        state["error"] = error_msg
-        return {"error": error_msg}
+        logger.error(error_msg)
+        state["error"] = get_user_friendly_error_message()
+        return {"error": get_user_friendly_error_message()}
 
 
 def analysis_generation_node(state: AgentState) -> AgentState:
@@ -1180,12 +1311,13 @@ def generate_and_execute_query_node(state: AgentState) -> AgentState:
             raise parse_error
 
         # If no function call was made, this is an error
-        state["error"] = "Model did not call any function as required"
+        logger.error("Model did not call any function as required")
+        state["error"] = get_user_friendly_error_message()
         return state
 
     except Exception as e:
         logger.error(f"Error in generate_and_execute_query_node: {str(e)}")
-        state["error"] = f"Query generation error: {str(e)}"
+        state["error"] = get_user_friendly_error_message()
         return state
 
 
@@ -1200,7 +1332,8 @@ def should_continue_to_analysis(state: AgentState) -> str:
     if state.get("query_result") and "error" in state["query_result"]:
         # Query failed - return error and end
         error_msg = state["query_result"]["error"]
-        state["error"] = f"Query execution failed: {error_msg}"
+        logger.error(f"Query execution failed: {error_msg}")
+        state["error"] = get_user_friendly_error_message()
         return END
     
     # Check if we have a successful query result
@@ -1212,7 +1345,8 @@ def should_continue_to_analysis(state: AgentState) -> str:
         return "generate"
     
     # Default: something went wrong
-    state["error"] = "Unexpected workflow state"
+    logger.error("Unexpected workflow state")
+    state["error"] = get_user_friendly_error_message()
     return END
 
 
@@ -1223,7 +1357,8 @@ def should_continue_after_analysis(state: AgentState) -> str:
     elif state.get("workflow_stage") == "completed":
         return END
     elif state.get("iterations_count", 0) > 10:
-        state["error"] = "Maximum iterations (10) reached"
+        logger.error("Maximum iterations (10) reached")
+        state["error"] = get_user_friendly_error_message()
         return END
     else:
         return "continue"
@@ -1312,15 +1447,17 @@ def run_excel_analysis(file_name: str, user_question: str, session_id: str = Non
 
         # Return results
         if final_state.get("error"):
-            return f"❌ Analysis failed: {final_state['error']}"
+            # Don't expose technical error details to user
+            logger.error(f"Analysis failed with error: {final_state['error']}")
+            return final_state['error']  # Already user-friendly from get_user_friendly_error_message()
         elif final_state.get("final_analysis"):
             return final_state["final_analysis"]
         else:
-            return "⚠️ Analysis completed but no results generated."
+            return get_user_friendly_error_message()
 
     except Exception as e:
         logger.error(f"Error in run_excel_analysis: {str(e)}")
-        return f"❌ System error: {str(e)}"
+        return get_user_friendly_error_message()
 
 
 # Main execution
