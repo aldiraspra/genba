@@ -70,6 +70,10 @@ def clear_duckdb_cache(file_name: str = None):
         _REGISTERED_SHEETS_CACHE.clear()
         logger.info("🗑️ Cleared all DuckDB caches")
 
+def get_user_friendly_error_message() -> str:
+    """Return a user-friendly error message instead of technical details"""
+    return "Maaf, saya mengalami kesulitan memproses pertanyaan Anda. Mohon coba lagi atau formulasikan pertanyaan dengan cara yang berbeda."
+
 # Prompts
 QUERY_GENERATION_PROMPT = """You are an Excel analysis expert that generates SQL or Pandas queries to analyze data from multiple Excel sheets.
 
@@ -465,6 +469,14 @@ REMEMBER: You must ALWAYS call a function. Never provide a text-only response.
 
 ANALYSIS_GENERATION_PROMPT = """You are an expert financial analyst and data scientist. Your job is to analyze query results and provide intelligent insights, recommendations, and business intelligence.
 
+CRITICAL LANGUAGE INSTRUCTION:
+- **ALWAYS match the language of the user's question**
+- If the user asks in Bahasa Indonesia, respond in Bahasa Indonesia
+- If the user asks in English, respond in English
+- Detect the language from the user's question and maintain that language throughout your entire response
+- Example: Question "berapa total revenue?" → Answer in Bahasa Indonesia
+- Example: Question "what is the total revenue?" → Answer in English
+
 CURRENT DATE & TIME CONTEXT:
 - Today's Date: {current_date}
 - Current Month: {current_month}
@@ -833,7 +845,7 @@ def complex_duckdb_query(file_name: str, query: str) -> dict:
         except:
             actual_tables = "unable to retrieve"
 
-        # Enhanced error info for debugging
+        # Enhanced error info for debugging (log only, not shown to user)
         debug_info = {
             "query": query,
             "available_sheets": sheet_names if "sheet_names" in locals() else "unknown",
@@ -844,8 +856,10 @@ def complex_duckdb_query(file_name: str, query: str) -> dict:
             ),
             "actual_duckdb_tables": actual_tables,
         }
+        logger.error(f"Debug info: {debug_info}")
 
-        return {"error": error_msg, "debug_info": debug_info}
+        # Return user-friendly error message (technical details only in logs)
+        return {"error": get_user_friendly_error_message(), "debug_info": debug_info}
     # Note: Connection is NOT closed here - it's cached for reuse
     # Use clear_duckdb_cache(file_name) to manually close and clear cache
 
@@ -920,7 +934,8 @@ def simple_dataframe_query(
             }
 
     except Exception as e:
-        return {"error": f"Pandas query error: {str(e)}"}
+        logger.error(f"Pandas query error: {str(e)}")
+        return {"error": get_user_friendly_error_message()}
 
 
 # Tool definitions for Gemini - using dictionary format that Gemini SDK accepts
@@ -1002,7 +1017,9 @@ def generate_analysis(user_question: str, query_result: dict, query: str, conver
     try:
         # Format the results for analysis
         if "error" in query_result:
-            return f"Unable to generate analysis due to query error: {query_result['error']}"
+            # Return user-friendly error instead of technical details
+            logger.error(f"Query error in analysis: {query_result['error']}")
+            return get_user_friendly_error_message()
 
         if "result" not in query_result:
             return "Query executed successfully but no data was returned for analysis."
@@ -1076,8 +1093,9 @@ def execute_function(name: str, args: dict, state: AgentState) -> dict:
 
     except Exception as e:
         error_msg = f"Function execution error: {str(e)}"
-        state["error"] = error_msg
-        return {"error": error_msg}
+        logger.error(error_msg)
+        state["error"] = get_user_friendly_error_message()
+        return {"error": get_user_friendly_error_message()}
 
 
 def analysis_generation_node(state: AgentState) -> AgentState:
@@ -1278,12 +1296,13 @@ def generate_and_execute_query_node(state: AgentState) -> AgentState:
             raise parse_error
 
         # If no function call was made, this is an error
-        state["error"] = "Model did not call any function as required"
+        logger.error("Model did not call any function as required")
+        state["error"] = get_user_friendly_error_message()
         return state
 
     except Exception as e:
         logger.error(f"Error in generate_and_execute_query_node: {str(e)}")
-        state["error"] = f"Query generation error: {str(e)}"
+        state["error"] = get_user_friendly_error_message()
         return state
 
 
@@ -1298,7 +1317,8 @@ def should_continue_to_analysis(state: AgentState) -> str:
     if state.get("query_result") and "error" in state["query_result"]:
         # Query failed - return error and end
         error_msg = state["query_result"]["error"]
-        state["error"] = f"Query execution failed: {error_msg}"
+        logger.error(f"Query execution failed: {error_msg}")
+        state["error"] = get_user_friendly_error_message()
         return END
     
     # Check if we have a successful query result
@@ -1310,7 +1330,8 @@ def should_continue_to_analysis(state: AgentState) -> str:
         return "generate"
     
     # Default: something went wrong
-    state["error"] = "Unexpected workflow state"
+    logger.error("Unexpected workflow state")
+    state["error"] = get_user_friendly_error_message()
     return END
 
 
@@ -1321,7 +1342,8 @@ def should_continue_after_analysis(state: AgentState) -> str:
     elif state.get("workflow_stage") == "completed":
         return END
     elif state.get("iterations_count", 0) > 10:
-        state["error"] = "Maximum iterations (10) reached"
+        logger.error("Maximum iterations (10) reached")
+        state["error"] = get_user_friendly_error_message()
         return END
     else:
         return "continue"
@@ -1410,15 +1432,17 @@ def run_excel_analysis(file_name: str, user_question: str, session_id: str = Non
 
         # Return results
         if final_state.get("error"):
-            return f"❌ Analysis failed: {final_state['error']}"
+            # Don't expose technical error details to user
+            logger.error(f"Analysis failed with error: {final_state['error']}")
+            return final_state['error']  # Already user-friendly from get_user_friendly_error_message()
         elif final_state.get("final_analysis"):
             return final_state["final_analysis"]
         else:
-            return "⚠️ Analysis completed but no results generated."
+            return get_user_friendly_error_message()
 
     except Exception as e:
         logger.error(f"Error in run_excel_analysis: {str(e)}")
-        return f"❌ System error: {str(e)}"
+        return get_user_friendly_error_message()
 
 
 # Main execution
