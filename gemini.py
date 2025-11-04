@@ -93,6 +93,30 @@ def get_user_friendly_error_message() -> str:
 # Prompts
 QUERY_GENERATION_PROMPT = """You are an Excel analysis expert that generates SQL or Pandas queries to analyze data from multiple Excel sheets.
 
+🚨🚨🚨 CRITICAL BEFORE SUBMITTING YOUR QUERY 🚨🚨🚨
+MANDATORY CHECKLIST - VALIDATE EVERY TIME:
+1. Count the arguments in EVERY REPLACE() function call
+   - Each REPLACE() MUST have EXACTLY 3 arguments: REPLACE(string, find, replace)
+   - ✅ CORRECT: REPLACE(column, ',', '')
+   - ❌ WRONG: REPLACE(column, ',')  ← MISSING 3rd argument!
+   
+2. Check your parentheses nesting in TRIM(REPLACE(REPLACE(...)))
+   - ✅ CORRECT: TRIM(REPLACE(REPLACE(col, ',', ''), '-', ''))
+   - ❌ WRONG: TRIM(REPLACE(REPLACE(col, ','), '-', ''))  ← Inner REPLACE missing 3rd arg!
+   - ❌ WRONG: TRIM(REPLACE(REPLACE(col, ',', '')), '-', '')  ← Wrong nesting!
+
+3. If you see REPLACE(REPLACE(...)), both need 3 arguments each
+   - Inner REPLACE: Must have 3 args
+   - Outer REPLACE: Must have 3 args
+
+4. For UNION ALL with ORDER BY/LIMIT - USE PARENTHESES!
+   - ✅ CORRECT: (SELECT ... ORDER BY col LIMIT 1) UNION ALL (SELECT ... LIMIT 1)
+   - ❌ WRONG: SELECT ... ORDER BY col LIMIT 1 UNION ALL SELECT ... LIMIT 1
+   - Wrap each SELECT in parentheses when using ORDER BY or LIMIT with UNION ALL
+   
+REMEMBER: The most common error is forgetting the empty string '' as the 3rd argument!
+Example: REPLACE(column, ',') is WRONG - should be REPLACE(column, ',', '')
+
 CURRENT DATE & TIME CONTEXT:
 - Today's Date: {current_date}
 - Current Month: {current_month}
@@ -148,6 +172,21 @@ WORKFLOW:
    - ALWAYS call either simple_dataframe_query OR complex_duckdb_query
 
 MANDATORY: Every response must include exactly one function call. No exceptions.
+
+🔍 SELF-VALIDATION BEFORE SUBMITTING QUERY:
+Before you call complex_duckdb_query or simple_dataframe_query:
+1. Scan your entire query for the word "REPLACE"
+2. For each REPLACE found, count the commas inside it
+3. You MUST have exactly 2 commas (which means 3 arguments)
+4. If you have REPLACE(something, ',') - STOP! Add the missing '' argument!
+5. If you have REPLACE(something, '-') - STOP! Add the missing '' argument!
+6. Double-check nested REPLACE calls - BOTH need 3 arguments each
+
+Example self-check:
+Query: REPLACE(REPLACE(" Kuantitas Drop SPK", ','), '-', '')
+Check inner: REPLACE(" Kuantitas Drop SPK", ',') - Only 1 comma! WRONG! ❌
+Fix inner: REPLACE(" Kuantitas Drop SPK", ',', '') - 2 commas! CORRECT! ✅
+Final: REPLACE(REPLACE(" Kuantitas Drop SPK", ',', ''), '-', '') ✅
 
 Tools Available (YOU MUST USE ONE):
 1. load_preview_data: Read Excel and preview sheets, columns, and data types
@@ -212,6 +251,39 @@ Multi-Sheet Analysis Rules:
      - **IMPORTANT**: Only Unit/Vehicle revenue has targets. Service and Part revenue do NOT have targets in the data.
 
 4. DuckDB SQL Rules:
+   - **🚨 MOST CRITICAL ERRORS TO AVOID 🚨**: 
+     
+     **A) REPLACE() FUNCTION REQUIRES EXACTLY 3 ARGUMENTS!**
+     - ✅ CORRECT: `REPLACE(column, ',', '')` - has 3 arguments
+     - ✅ CORRECT: `REPLACE(column, '-', '')` - has 3 arguments  
+     - ❌ WRONG: `REPLACE(column, ',')` - MISSING 3rd argument! WILL CAUSE ERROR!
+     - ❌ WRONG: `REPLACE(column, '-')` - MISSING 3rd argument! WILL CAUSE ERROR!
+     - **ALWAYS double-check your REPLACE() calls have 3 arguments before submitting!**
+     
+     **B) UNION ALL QUERIES - REQUIRES PARENTHESES AROUND EACH SELECT!**
+     - ✅ CORRECT: Use parentheses when ORDER BY or LIMIT in UNION ALL
+     - ❌ WRONG: ORDER BY/LIMIT without parentheses causes "syntax error at UNION"
+     - **Example of WRONG query (causes error):**
+       ```sql
+       SELECT * FROM table ORDER BY col DESC LIMIT 1
+       UNION ALL
+       SELECT * FROM table ORDER BY col ASC LIMIT 1
+       ```
+     - **Example of CORRECT query:**
+       ```sql
+       (SELECT * FROM table ORDER BY col DESC LIMIT 1)
+       UNION ALL
+       (SELECT * FROM table ORDER BY col ASC LIMIT 1)
+       ```
+     - **Best approach for "highest and lowest"**: Use parentheses around each SELECT:
+       ```sql
+       WITH data AS (SELECT col1, col2 FROM table)
+       (SELECT *, 'Highest' AS category FROM data ORDER BY col2 DESC LIMIT 1)
+       UNION ALL
+       (SELECT *, 'Lowest' AS category FROM data ORDER BY col2 ASC LIMIT 1)
+       ```
+     - **CRITICAL**: When combining UNION ALL with ORDER BY or LIMIT, ALWAYS wrap each SELECT in parentheses!
+   
    - **CRITICAL**: Column names with spaces or special characters MUST be enclosed in double quotes (e.g., `"Actual DO"`).
    - **CRITICAL: GROUP BY Rules**: 
      - If you SELECT a column, it MUST be in GROUP BY or wrapped in an aggregate function (SUM, MAX, MIN, COUNT, etc.)
@@ -614,6 +686,15 @@ def get_excel_sheets(file_path: str) -> List[str]:
         logger.error(f"Error reading Excel sheets: {str(e)}")
         return []
 
+
+def get_user_friendly_error_message() -> str:
+    """Return a user-friendly error message instead of technical details"""
+    return (
+        "Maaf, terjadi kesalahan saat memproses pertanyaan Anda. "
+        "Silakan coba lagi atau ubah pertanyaan Anda. "
+    )
+
+
 def safe_json_convert(obj):
     """Convert pandas/numpy objects to JSON-serializable format"""
     if pd.isna(obj):
@@ -744,12 +825,43 @@ def load_preview_data(file_name: str, sheet_name: Optional[str] = None) -> dict:
         return preview_data
 
     except Exception as e:
-        return {"error": f"Failed to examine Excel structure: {str(e)}"}
+        logger.error(f"Failed to examine Excel structure: {str(e)}")
+        return {"error": get_user_friendly_error_message()}
 
 
 def complex_duckdb_query(file_name: str, query: str) -> dict:
     """Execute complex SQL queries supporting multiple sheets"""
     try:
+        # 🚨 VALIDATE QUERY BEFORE EXECUTION 🚨
+        import re
+        
+        # Validation 1: Check for common REPLACE() syntax errors
+        replace_pattern = r'REPLACE\s*\([^)]+\)'
+        replace_calls = re.findall(replace_pattern, query, re.IGNORECASE)
+        
+        for replace_call in replace_calls:
+            # Count commas in the REPLACE call (should be 2 commas = 3 arguments)
+            # Remove string literals first to avoid counting commas inside strings
+            temp = re.sub(r"'[^']*'", '', replace_call)
+            comma_count = temp.count(',')
+            
+            if comma_count != 2:
+                error_msg = f"❌ Query validation error: REPLACE() function requires exactly 3 arguments.\n"
+                error_msg += f"Found: {replace_call}\n"
+                error_msg += f"Expected: REPLACE(column, 'find', 'replace')\n"
+                error_msg += f"Please fix the query and try again."
+                logger.error(error_msg)
+                # Return user-friendly message to frontend
+                return {"error": get_user_friendly_error_message()}
+        
+        # Validation 2: Check for semicolon before UNION ALL (common error)
+        if re.search(r';\s*UNION\s+ALL', query, re.IGNORECASE):
+            error_msg = "❌ Query validation error: Semicolon before UNION ALL breaks the query.\n"
+            error_msg += "Remove semicolons in the middle of UNION ALL queries.\n"
+            error_msg += "Only use semicolon at the very end, or omit entirely."
+            logger.error(error_msg)
+            return {"error": get_user_friendly_error_message()}
+        
         file_path = os.path.join(os.getcwd(), file_name)
         
         # Get or create cached connection
@@ -1087,7 +1199,7 @@ def generate_analysis(user_question: str, query_result: dict, query: str, conver
 
     except Exception as e:
         logger.error(f"Error generating analysis: {str(e)}")
-        return f"Error generating analysis: {str(e)}"
+        return get_user_friendly_error_message()
 
 
 def execute_function(name: str, args: dict, state: AgentState) -> dict:
@@ -1134,7 +1246,7 @@ def analysis_generation_node(state: AgentState) -> AgentState:
 
     except Exception as e:
         logger.error(f"Error in analysis_generation_node: {str(e)}")
-        state["error"] = f"Analysis generation error: {str(e)}"
+        state["error"] = get_user_friendly_error_message()
         return state
 
 
